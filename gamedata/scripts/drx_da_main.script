@@ -1763,11 +1763,13 @@ function register_anomalies_behaviour()
 	end, nil, 5)
 end
 
+-- unused
 anomalies_pos_tree = nil
 detectable_anomalies_pos_tree = nil
-detectable_anomalies_ids = {}
 anomalies_obj_to_pos = {}
 anomalies_sec_to_obj = {}
+
+detectable_anomalies_ids = {}
 
 common_sec = {
 	zone_mine_electric = "zone_mine_electric",
@@ -1803,9 +1805,7 @@ function build_anomalies_pos_tree()
 
 	local objects = {}
 	local obj_to_pos = {}
-	local sec_to_obj = {}
-
-	
+	local sec_to_obj = {}	
 
 	for i = 1, 65534 do
 		local obj = get_anomaly_obj(i, level_name)
@@ -1827,11 +1827,6 @@ function build_anomalies_pos_tree()
 		end
 	end
 
-	-- try(function()
-	-- 	anomalies_pos_tree = kd_tree.buildTreeSeObjects(objects)
-	-- 	anomalies_obj_to_pos = anomalies_pos_tree and obj_to_pos
-	-- end)
-
 	empty_table(detectable_anomalies_ids)
 	local t = {}
 	for k, v in pairs(sec_to_obj) do
@@ -1848,6 +1843,47 @@ function build_anomalies_pos_tree()
 		end
 	end
 	detectable_anomalies_pos_tree = kd_tree.buildTreeSeObjectIds(t)
+end
+
+function find_nearest_anomaly(force_enabled)
+	local actor = db.actor
+	local actor_pos = actor:position()
+	local actor_pos_distance = actor_pos.distance_to_sqr
+	local distance = math.huge
+	local anom_id
+	local anom_pos
+	local anom_sec
+
+	local pairs = pairs
+	local level_object_by_id = level.object_by_id
+	local level_name = level.name()
+
+	for id, _ in pairs(detectable_anomalies_ids) do
+		local obj = level_object_by_id(id)
+		if obj then
+			local enabled = true
+
+			if not force_enabled then
+				local props = updated_anomaly_levels[level_name].anomalies_properties[id]
+				if props and props.active ~= nil then
+					enabled = props.active
+				end
+			end
+
+			if enabled then
+				local pos = obj:position()
+				local d = actor_pos_distance(actor_pos, pos)
+				if d < distance then
+					distance = d
+					anom_id = id
+					anom_pos = pos
+					anom_sec = obj:section()
+				end
+			end
+		end
+	end
+
+	return distance, anom_id, anom_sec, anom_pos
 end
 
 -- Rays
@@ -2353,98 +2389,83 @@ anomalies_near_actor_functions = {
 }
 -- Special behaviour for anomalies after spawn
 anomalies_spawn_functions = {
-
-	-- Ghost, wandering path along its start position
 	zone_mine_ghost = function(anomaly)
-		if anomaly.spawn_position then
-			local spawn_position = anomaly.spawn_position
-			local obj = anomaly.object
-			local obj_set_anomaly_position = obj.set_anomaly_position
-			local vector = vector()
-			local vector_set = vector.set
-			local key = obj:name()
+		local spawn_position = anomaly.spawn_position
 
-			local sin_lut = anomalies_vars.sin_lut
-			local cos_lut = anomalies_vars.cos_lut
-
-			local i = random_choice(0, 45, 90, 135, 180)
-			local i_step = random_choice(1, 2, 3)
-			local j = 0
-			local j_step = 1
-			if i_step == 1 then
-				j_step = random_choice(2, 3)
-			elseif i_step == 2 then
-				j_step = random_choice(1, 3)
-			elseif i_step == 3 then
-				j_step = random_choice(2, 4)
-			end
-
-			local full_circle = 360
-
-			local function generate_distance()
-				return random() * 2.5 + 0.5
-			end
-
-			local x_modifier = generate_distance() * random_choice(1, -1)
-			local z_modifier = generate_distance() * random_choice(1, -1)
-
-			local function wrap(i)
-				return i >= full_circle and i % full_circle or i
-			end
-
-			local max_offset_y = 0.5
-			local max_offset_y_low = spawn_position.y - max_offset_y
-			local max_offset_y_high = spawn_position.y + max_offset_y
-
-			local prev_pos_x = spawn_position.x
-			local prev_pos_y = spawn_position.y
-			local prev_pos_z = spawn_position.z
-			register_callback("actor_on_update", function()
-				if i >= full_circle then
-					i = i % full_circle
-				end
-
-				if j >= full_circle then
-					j = j % full_circle
-				end
-
-				local offset_x = spawn_position.x + sin_lut[i] * x_modifier
-				local offset_z = spawn_position.z + sin_lut[j] * z_modifier
-				local offset_y = spawn_position.y
-
-				-- Adjust to height by checking lvid
-				local lvid = level_vertex_id(vector_set(vector, offset_x, offset_y, offset_z))
-				if (lvid < 4294967295) then
-					local pos_y = level_vertex_position(lvid).y
-					if abs(pos_y - prev_pos_y) < max_offset_y then
-						offset_y = pos_y
-					end
-					-- offset_y = clamp(pos_y, max_offset_y_low, max_offset_y_high)
-				end
-
-				obj_set_anomaly_position(obj, vector_set(vector, offset_x, offset_y, offset_z))
-				prev_pos_x = offset_x
-				prev_pos_y = offset_y
-				prev_pos_z = offset_z
-
-				local delta = min(50, device().time_delta) / 22 -- Frame independent movement, less than 20 fps will be slower due to prevent sudden pops
-				i = floor(i + i_step * delta)
-				j = floor(j + j_step * delta)
-			end, nil, key)
+		anomaly.zone_mine_ghost_i = random_choice(0, 45, 90, 135, 180)
+		anomaly.zone_mine_ghost_i_step = random_choice(1, 2, 3)
+		anomaly.zone_mine_ghost_j = 0
+		anomaly.zone_mine_ghost_j_step = 1
+		if anomaly.zone_mine_ghost_i_step == 1 then
+			anomaly.zone_mine_ghost_j_step = random_choice(2, 3)
+		elseif anomaly.zone_mine_ghost_i_step == 2 then
+			anomaly.zone_mine_ghost_j_step = random_choice(1, 3)
+		elseif anomaly.zone_mine_ghost_i_step == 3 then
+			anomaly.zone_mine_ghost_j_step = random_choice(2, 4)
 		end
-	end,
 
+		local function generate_distance()
+			return random() * 2.5 + 0.5
+		end
+
+		anomaly.zone_mine_ghost_x_modifier = generate_distance() * random_choice(1, -1)
+		anomaly.zone_mine_ghost_z_modifier = generate_distance() * random_choice(1, -1)
+
+		anomaly.zone_mine_ghost_max_offset_y = 0.5
+		anomaly.zone_mine_ghost_max_offset_y_low = spawn_position.y - anomaly.zone_mine_ghost_max_offset_y
+		anomaly.zone_mine_ghost_max_offset_y_high = spawn_position.y + anomaly.zone_mine_ghost_max_offset_y
+
+		anomaly.zone_mine_ghost_prev_pos_x = spawn_position.x
+		anomaly.zone_mine_ghost_prev_pos_y = spawn_position.y
+		anomaly.zone_mine_ghost_prev_pos_z = spawn_position.z
+	end,
 }
 
 -- Special behaviour for anomalies after destroy
-anomalies_destroy_functions = {
+anomalies_destroy_functions = {}
 
-	-- Ghost, destroy callback for wandering
+anomalies_actor_on_update_functions = {
+	-- Ghost, wandering path along its start position
 	zone_mine_ghost = function(anomaly)
-		local key = anomaly.object:name()
-		unregister_callback(key)
-	end,
+		local spawn_position = anomaly.spawn_position
+		local obj = anomaly.object
 
+		local sin_lut = anomalies_vars.sin_lut
+		local full_circle = 360
+
+		if anomaly.zone_mine_ghost_i >= full_circle then
+			anomaly.zone_mine_ghost_i = anomaly.zone_mine_ghost_i % full_circle
+		end
+
+		if anomaly.zone_mine_ghost_j >= full_circle then
+			anomaly.zone_mine_ghost_j = anomaly.zone_mine_ghost_j % full_circle
+		end
+
+		local offset_x = spawn_position.x + sin_lut[anomaly.zone_mine_ghost_i] * anomaly.zone_mine_ghost_x_modifier
+		local offset_z = spawn_position.z + sin_lut[anomaly.zone_mine_ghost_j] * anomaly.zone_mine_ghost_z_modifier
+		local offset_y = spawn_position.y
+
+		local v = vector():set(offset_x, offset_y, offset_z)
+
+		-- Adjust to height by checking lvid
+		local lvid = level_vertex_id(v)
+		if (lvid < 4294967295) then
+			local pos_y = level_vertex_position(lvid).y
+			if abs(pos_y - anomaly.zone_mine_ghost_prev_pos_y) < anomaly.zone_mine_ghost_max_offset_y then
+				offset_y = pos_y
+			end
+			-- offset_y = clamp(pos_y, anomaly.zone_mine_ghost_max_offset_y_low, anomaly.zone_mine_ghost_max_offset_y_high)
+		end
+
+		obj:set_anomaly_position(v)
+		anomaly.zone_mine_ghost_prev_pos_x = offset_x
+		anomaly.zone_mine_ghost_prev_pos_y = offset_y
+		anomaly.zone_mine_ghost_prev_pos_z = offset_z
+
+		local delta = min(50, device().time_delta) / 22 -- Frame independent movement, less than 20 fps will be slower due to prevent sudden pops
+		anomaly.zone_mine_ghost_i = floor(anomaly.zone_mine_ghost_i + anomaly.zone_mine_ghost_i_step * delta)
+		anomaly.zone_mine_ghost_j = floor(anomaly.zone_mine_ghost_j + anomaly.zone_mine_ghost_j_step * delta)
+	end,
 }
 
 anomaly_detector_ignore = {
@@ -2523,47 +2544,6 @@ anomaly_detector_ignore = {
 	mp_explosive_barrel = true,
 
 }
-
-function find_nearest_anomaly(force_enabled)
-	local actor = db.actor
-	local actor_pos = actor:position()
-	local actor_pos_distance = actor_pos.distance_to_sqr
-	local distance = math.huge
-	local anom_id
-	local anom_pos
-	local anom_sec
-
-	local pairs = pairs
-	local level_object_by_id = level.object_by_id
-	local level_name = level.name()
-
-	for id, _ in pairs(detectable_anomalies_ids) do
-		local obj = level_object_by_id(id)
-		if obj then
-			local enabled = true
-
-			if not force_enabled then
-				local props = updated_anomaly_levels[level_name].anomalies_properties[id]
-				if props and props.active ~= nil then
-					enabled = props.active
-				end
-			end
-
-			if enabled then
-				local pos = obj:position()
-				local d = actor_pos_distance(actor_pos, pos)
-				if d < distance then
-					distance = d
-					anom_id = id
-					anom_pos = pos
-					anom_sec = obj:section()
-				end
-			end
-		end
-	end
-
-	return distance, anom_id, anom_sec, anom_pos
-end
 
 detector_functions = {
 	-- Play sound
@@ -2649,6 +2629,60 @@ function notify_anomaly(anomaly, actor, distance_to_sqr, radius_sqr, custom_call
 	end
 end
 
+local anomalies_actor_on_update_callbacks = {}
+bind_anomaly_field.anomaly_field_binder.anomaly_actor_on_update_function = function(self)
+	local section = self.section
+	if anomalies_actor_on_update_functions[section] then
+		anomalies_actor_on_update_functions[section](self)
+	end
+
+	local tg = time_global()
+	if tg < self.on_update_time then return end
+
+	local level_name = level.name()
+
+	-- Get behaviour radius and check if actor inside it, then apply effect
+	local actor = db.actor
+	local radius_sqr = self.radius_sqr
+	local distance_to_sqr = self.object:position():distance_to_sqr(actor:position())
+	if distance_to_sqr <= radius_sqr then
+
+		-- Beep near anoms even if disabled for anomaly_detector
+		if not (
+			anomaly_detector_ignore[self.section]
+		or	(
+			level_name 
+			and updated_anomaly_levels[level_name]
+			and updated_anomaly_levels[level_name].disabled
+			and updated_anomaly_levels[level_name].anomalies_properties
+			and updated_anomaly_levels[level_name].anomalies_properties[self.object:id()]
+			)
+		) then
+			local og_dyn_anomalies = bind_anomaly_field.dyn_anomalies
+			if not og_dyn_anomalies then
+				notify_anomaly(self, actor, distance_to_sqr, radius_sqr, true)
+			else
+				local level_name = level.name()
+				if og_dyn_anomalies[level_name] and og_dyn_anomalies[level_name][self.object:id()] ~= nil then
+					if og_dyn_anomalies[level_name][self.object:id()] then
+						notify_anomaly(self, actor, distance_to_sqr, radius_sqr, true)
+					end
+				else
+					notify_anomaly(self, actor, distance_to_sqr, radius_sqr, true)
+				end
+			end
+		end
+		self.on_update_timer = self.on_update_timer_default
+	else
+		detector_functions.detector_anomaly_remove_factor(detector_functions, self, actor, distance_to_sqr, radius_sqr, true)
+		self.on_update_timer = clamp(self.on_update_timer_default * (distance_to_sqr / radius_sqr * 0.5), self.on_update_timer_default, self.on_update_timer_max)
+
+		-- _G.printf("%s, on_update_timer %s", self.object:name(), self.on_update_timer)
+	end
+
+	self.on_update_time = tg + self.on_update_timer
+end
+
 bind_anomaly_field_spawn = bind_anomaly_field.anomaly_field_binder.net_spawn
 bind_anomaly_field.anomaly_field_binder.net_spawn = function(self, se_abstract)
 	if not bind_anomaly_field_spawn(self, se_abstract) then
@@ -2685,54 +2719,8 @@ bind_anomaly_field.anomaly_field_binder.net_spawn = function(self, se_abstract)
 	end
 	self.radius = sqrt(self.radius_sqr)
 	self.behaviour_radius_sqr = get_anomaly_behaviour_radius(section)
-	local level_name = level.name()
 
-	register_callback("actor_on_update", function()
-		local tg = time_global()
-		if tg < self.on_update_time then return end
-
-		-- Get behaviour radius and check if actor inside it, then apply effect
-		local actor = db.actor
-		local radius_sqr = self.radius_sqr
-		local distance_to_sqr = self.object:position():distance_to_sqr(actor:position())
-		if distance_to_sqr <= radius_sqr then
-
-			-- Beep near anoms even if disabled for anomaly_detector
-			if not (
-				anomaly_detector_ignore[self.section]
-			or	(
-				level_name 
-				and updated_anomaly_levels[level_name]
-				and updated_anomaly_levels[level_name].disabled
-				and updated_anomaly_levels[level_name].anomalies_properties
-				and updated_anomaly_levels[level_name].anomalies_properties[self.object:id()]
-				)
-			) then
-				local og_dyn_anomalies = bind_anomaly_field.dyn_anomalies
-				if not og_dyn_anomalies then
-					notify_anomaly(self, actor, distance_to_sqr, radius_sqr, true)
-				else
-					local level_name = level.name()
-					if og_dyn_anomalies[level_name] and og_dyn_anomalies[level_name][self.object:id()] ~= nil then
-						if og_dyn_anomalies[level_name][self.object:id()] then
-							notify_anomaly(self, actor, distance_to_sqr, radius_sqr, true)
-						end
-					else
-						notify_anomaly(self, actor, distance_to_sqr, radius_sqr, true)
-					end
-				end
-			end
-			self.on_update_timer = self.on_update_timer_default
-		else
-			detector_functions.detector_anomaly_remove_factor(detector_functions, self, actor, distance_to_sqr, radius_sqr, true)
-			self.on_update_timer = clamp(self.on_update_timer_default * (distance_to_sqr / radius_sqr * 0.5), self.on_update_timer_default, self.on_update_timer_max)
-
-			-- _G.printf("%s, on_update_timer %s", self.object:name(), self.on_update_timer)
-		end
-
-		self.on_update_time = tg + self.on_update_timer
-	end, nil, self.update_key)
-
+	table.insert(anomalies_actor_on_update_callbacks, self)
 	return true
 end
 
@@ -2748,7 +2736,12 @@ bind_anomaly_field.anomaly_field_binder.net_destroy = function(self)
 		anomalies_destroy_functions[section](self)
 	end
 
-	unregister_callback(self.update_key)
+	for i = #anomalies_actor_on_update_callbacks, 1, -1 do
+		local v = anomalies_actor_on_update_callbacks[i]
+		if v.update_key == self.update_key then
+			table.remove(anomalies_actor_on_update_callbacks, i)
+		end
+	end
 
 	bind_anomaly_field_destroy(self)
 end
@@ -2847,6 +2840,10 @@ end
 local actor_on_update_time = 0
 local actor_on_update_timer = 100
 function actor_on_update()
+	for i, v in ipairs(anomalies_actor_on_update_callbacks) do
+		v:anomaly_actor_on_update_function()
+	end
+
 	local tg = time_global()
 	if tg < actor_on_update_time then return end
 	actor_on_update_time = tg + actor_on_update_timer
