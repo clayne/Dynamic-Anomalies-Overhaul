@@ -2630,11 +2630,9 @@ function notify_anomaly(anomaly, actor, distance_to_sqr, radius_sqr, custom_call
 end
 
 local anomalies_actor_on_update_callbacks = {}
+local anomalies_actor_on_update_callbacks_throttled = {}
 bind_anomaly_field.anomaly_field_binder.anomaly_actor_on_update_function = function(self)
 	local section = self.section
-	if anomalies_actor_on_update_functions[section] then
-		anomalies_actor_on_update_functions[section](self)
-	end
 
 	local tg = time_global()
 	if tg < self.on_update_time then return end
@@ -2720,7 +2718,11 @@ bind_anomaly_field.anomaly_field_binder.net_spawn = function(self, se_abstract)
 	self.radius = sqrt(self.radius_sqr)
 	self.behaviour_radius_sqr = get_anomaly_behaviour_radius(section)
 
-	table.insert(anomalies_actor_on_update_callbacks, self)
+	table.insert(anomalies_actor_on_update_callbacks_throttled, self)
+	if anomalies_actor_on_update_functions[section] then
+		table.insert(anomalies_actor_on_update_callbacks, self)
+	end
+
 	return true
 end
 
@@ -2734,6 +2736,13 @@ bind_anomaly_field.anomaly_field_binder.net_destroy = function(self)
 
 	if anomalies_destroy_functions[section] then
 		anomalies_destroy_functions[section](self)
+	end
+
+	for i = #anomalies_actor_on_update_callbacks_throttled, 1, -1 do
+		local v = anomalies_actor_on_update_callbacks_throttled[i]
+		if v.update_key == self.update_key then
+			table.remove(anomalies_actor_on_update_callbacks_throttled, i)
+		end
 	end
 
 	for i = #anomalies_actor_on_update_callbacks, 1, -1 do
@@ -2841,7 +2850,7 @@ local actor_on_update_time = 0
 local actor_on_update_timer = 100
 function actor_on_update()
 	for i, v in ipairs(anomalies_actor_on_update_callbacks) do
-		v:anomaly_actor_on_update_function()
+		anomalies_actor_on_update_functions[v.section](v)
 	end
 
 	local tg = time_global()
@@ -2850,6 +2859,10 @@ function actor_on_update()
 
 	time_elapsed = get_time_elapsed()
 	process_timed_effects()
+
+	for i, v in ipairs(anomalies_actor_on_update_callbacks_throttled) do
+		v:anomaly_actor_on_update_function()
+	end
 end
 
 function actor_on_interaction(typ, obj, name)
